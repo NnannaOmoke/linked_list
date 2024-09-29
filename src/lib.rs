@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::alloc::alloc;
+use std::alloc::dealloc;
 use std::alloc::Layout;
 
 use std::iter::IntoIterator;
@@ -71,11 +72,16 @@ impl<T> LinkedList<T> {
                 let prev = if let Some(prev_ptr) = data.prev {
                     prev_ptr
                 } else {
-                    unreachable!("What have I done?")
+                    ptr.drop_in_place();
+                    self.len -= 1;
+                    self.last = None;
+                    return Some(data.data);
                 };
                 (*prev).next = None;
-                ptr.drop_in_place();
+                dealloc(ptr as *mut u8, Layout::new::<Node<T>>());
+                //ptr.drop_in_place();
                 self.len -= 1;
+                self.last = Some(prev);
                 Some(data.data)
             }
             None => None,
@@ -89,10 +95,14 @@ impl<T> LinkedList<T> {
                 let next = if let Some(next_ptr) = data.next {
                     next_ptr
                 } else {
-                    unreachable!("Again I ask, what have I done?")
+                    ptr.drop_in_place();
+                    self.head = None;
+                    self.len -= 1;
+                    return Some(data.data);
                 };
                 (*next).prev = None;
-                ptr.drop_in_place();
+                dealloc(ptr as *mut u8, Layout::new::<Node<T>>());
+                self.head = Some(next);
                 self.len -= 1;
                 Some(data.data)
             }
@@ -106,6 +116,13 @@ impl<T> LinkedList<T> {
         let data = data.data;
         unsafe { current.drop_in_place() };
         (next, data)
+    }
+    pub fn new() -> Self {
+        Self {
+            head: None,
+            last: None,
+            len: 0,
+        }
     }
 
     pub fn insert(&mut self, data: T) {
@@ -128,7 +145,6 @@ impl<T> LinkedList<T> {
         self.len
     }
 }
-
 pub struct LinkedListIterator<T> {
     internal: LinkedList<T>,
     current: Option<*mut Node<T>>,
@@ -157,5 +173,55 @@ impl<T> Iterator for LinkedListIterator<T> {
             }
             None => None,
         }
+    }
+}
+
+impl<T> Drop for LinkedList<T> {
+    fn drop(&mut self) {
+        match self.last {
+            Some(ptr) => {
+                let mut current = ptr;
+                loop {
+                    if let Some(new) = unsafe { (*current).prev } {
+                        unsafe {
+                            current.drop_in_place();
+                            dealloc(current as *mut u8, Layout::new::<Node<T>>())
+                        };
+                        current = new;
+                    } else {
+                        unsafe {
+                            current.drop_in_place();
+                            dealloc(current as *mut u8, Layout::new::<Node<T>>())
+                        };
+                        break;
+                    }
+                }
+            }
+            None => return,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn basic_stuff() {
+        let mut list = LinkedList::new();
+        for val in 0..5 {
+            list.insert(val);
+        }
+        assert_eq!(list.len(), 5);
+        assert_eq!(list.pop(), Some(0));
+        assert_eq!(list.pop_back(), Some(4));
+        // for val in list {
+        //     println!("{}", val)
+        // }
+        assert_eq!(list.len(), 3);
+        assert_eq!(list.pop(), Some(1));
+        assert_eq!(list.pop(), Some(2));
+        assert_eq!(list.pop(), Some(3));
+        assert_eq!(list.pop(), None);
+        assert_eq!(list.len(), 0);
     }
 }
